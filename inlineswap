@@ -1,0 +1,117 @@
+#!/usr/bin/python
+# Copyright (C) 2012  Roman Zimbelmann <hut@lavabit.com>
+# This software is distributed under the terms of the GNU GPL version 3.
+"""
+inlineswap is a html preprocessor for pre-generated static websites.
+
+It searches your html files for commands in the form of <!-- COMMAND [ARGS] -->
+and evaluates them IN-PLACE.  NESTING COMMANDS IS NOT SUPPORTED.
+The following commands exist:
+
+run:
+  <!-- run ls -l -->
+  <!-- /run -->
+
+  This will execute "ls -l" in the shell and insert the output into the block
+
+get:
+  You can write this in index.html:
+
+    <!-- head -->
+    <head><title>inlineswap</title></head>
+    <!-- /head -->
+
+  and this in another file:
+    
+    <!-- get head from index.html -->
+    foo
+    <!-- /get -->
+
+  and foo will be replaced by <head><title>inlineswap</title></head>.
+
+relative:
+  <!-- relative -->
+  <a href="about.html">about</a>
+  <!-- /relative -->
+
+  If you use this in a "get"-block, it will fix URLs with relative paths.
+"""
+
+import os.path
+import re
+import sys
+from subprocess import Popen, PIPE, call
+
+PATTERN_GET = r'(<!--\s*get\s+(\w+)\s+from\s+([^\s]+)\s*-->\n?)(.*?)(<!--\s*/get\s*-->)'
+PATTERN_RUN = r'(<!--\s*run\s+(.*?)\s*-->(\n?))(.*?)(<!--\s*/run\s*-->)'
+PATTERN_RELATIVE = r'(<!--\s*relative\s*-->\n?)(.*?)(<!--\s*/relative\s*-->)'
+PATTERN_GETURL = r'href="([^"]+?\.[^"]+?)"'
+PATTERN_GETKEYWORD = r'<!--\s*{0}\s*-->\n?(.*?)<!--\s*/{0}\s*-->'
+
+def main():
+  if '-h' in sys.argv or '--help' in sys.argv or len(sys.argv) <= 1:
+    return sys.stdout.write("usage: inlineswap [--dry] [-h|--help] files...\n")
+
+  for filename in [s for s in sys.argv[1:] if not s.startswith('-')]:
+    tmpname = filename + ".__new"
+
+    f = open(filename, 'r')
+    content = f.read()
+    f.close()
+    processed_content = process(content, filename)
+    if processed_content == content:
+      print("unchanged: %s" % filename)
+      continue
+
+    tmp = open(tmpname, "w")
+    tmp.write(processed_content)
+    tmp.close()
+    call(['diff', '-u', filename, tmpname])
+
+    if '--dry' in sys.argv:
+      os.unlink(tmpname)
+    else:
+      print("writing: %s" % filename)
+      os.rename(tmpname, filename)
+
+def process(content, filename):
+  global PATH
+  PATH = os.path.dirname(filename)
+  content = re.sub(PATTERN_GET, _command_get, content, 0, re.S)
+  content = re.sub(PATTERN_RUN, _command_run, content, 0, re.S)
+  return content
+
+
+def _command_get(m):
+  filename = m.group(3)
+  keyword = m.group(2)
+  fallback = m.group(4)
+
+  f = open(filename, 'r')
+  content = f.read()
+  f.close()
+  match = re.search(PATTERN_GETKEYWORD.format(keyword), content, re.DOTALL)
+  if match is None:
+    sys.stderr.write("Could not find keyword {0} in {1}\n".format(keyword, filename))
+    result = fallback
+  else:
+    result = re.sub(PATTERN_RELATIVE, _command_relative, match.group(1), 0, re.S)
+
+  return m.group(1) + result + m.group(5)
+
+
+def _command_relative(m):
+  return m.group(1) + re.sub(PATTERN_GETURL,
+      lambda match: 'href="' + os.path.relpath(match.group(1), PATH) + '"',
+      m.group(2)) + m.group(3)
+
+
+def _command_run(m):
+  output = Popen(m.group(2), shell=True, stdout=PIPE).communicate()[0]
+  if m.group(3) != "\n":
+    output = output.strip()
+  return m.group(1) + output.decode('utf-8') + m.group(5)
+
+
+if __name__ == '__main__':
+  main()
