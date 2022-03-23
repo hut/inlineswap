@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 # Copyright (C) 2012  Roman Zimbelmann <hut@hut.pm>
 # This software is distributed under the terms of the GNU GPL version 3.
+# Official website: https://github.com/hut/inlineswap
 """
 inlineswap is a html preprocessor for pre-generated static websites.
 
